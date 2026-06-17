@@ -1,7 +1,7 @@
 import whisper
 import os
 import requests
-from pydub import AudioSegment
+import subprocess
 
 SARVAM_PIECE_SECONDS = 25
 WHISPER_MODEL = os.getenv("WHISPER_MODEL","small")
@@ -50,30 +50,54 @@ def _send_to_sarvam(piece_path: str) -> str:
     return response.json().get("transcript", "")
 
 def transcribe_chunk_sarvam(chunk_path: str) -> str:
-    """
-    Sarvam sync API only accepts ≤30s audio. We split this chunk into
-    25-second pieces, send each separately, and join the transcripts.
-    """
     if not SARVAM_API_KEY:
-        raise RuntimeError("SARVAM_API_KEY is not set in environment / .env")
+        raise RuntimeError("SARVAM_API_KEY is not set")
 
-    audio = AudioSegment.from_wav(chunk_path)
-    piece_ms = SARVAM_PIECE_SECONDS * 1000
+    temp_dir = f"{chunk_path}_sarvam_parts"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    output_pattern = os.path.join(temp_dir, "part_%03d.wav")
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            chunk_path,
+            "-f",
+            "segment",
+            "-segment_time",
+            str(SARVAM_PIECE_SECONDS),
+            "-c",
+            "copy",
+            output_pattern,
+            "-y",
+        ],
+        check=True,
+    )
+
+    pieces = sorted(
+        [
+            os.path.join(temp_dir, f)
+            for f in os.listdir(temp_dir)
+            if f.endswith(".wav")
+        ]
+    )
 
     full_text = ""
-    total_pieces = (len(audio) + piece_ms - 1) // piece_ms
 
-    for i, start in enumerate(range(0, len(audio), piece_ms)):
-        piece = audio[start: start + piece_ms]
-        piece_path = f"{chunk_path}_sv_{i}.wav"
-        piece.export(piece_path, format="wav")
+    for i, piece_path in enumerate(pieces):
+        print(f"  → Sarvam piece {i + 1}/{len(pieces)} ...")
 
         try:
-            print(f"  → Sarvam piece {i + 1}/{total_pieces} ...")
             full_text += _send_to_sarvam(piece_path) + " "
         finally:
             if os.path.exists(piece_path):
                 os.remove(piece_path)
+
+    try:
+        os.rmdir(temp_dir)
+    except:
+        pass
 
     return full_text.strip()
 

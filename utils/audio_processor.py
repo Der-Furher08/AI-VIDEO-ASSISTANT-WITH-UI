@@ -1,5 +1,5 @@
 import yt_dlp
-from pydub import AudioSegment
+import subprocess
 import os
 
 DOWNLOAD_DIR = 'downloades'
@@ -24,28 +24,88 @@ def download_youtube_audio(url :str) ->str:
         filename = ydl.prepare_filename(info).replace(".webm", ".wav").replace(".m4a", ".wav")
     return filename
 
-def convert_to_wav(input_path: str) -> str:
-    """Convert any audio/video file to WAV format using pydub."""
+def convert_to_wav(input_path):
     output_path = os.path.splitext(input_path)[0] + "_converted.wav"
-    audio = AudioSegment.from_file(input_path)
-    audio = audio.set_channels(1).set_frame_rate(16000) #16khz
-    audio.export(output_path, format="wav")
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-i", input_path,
+            "-ac", "1",
+            "-ar", "16000",
+            output_path,
+            "-y"
+        ],
+        check=True
+    )
+
     return output_path
 
 
-def chunk_audio(wav_path : str , chunk_minutes : int = 10) -> list:
-    audio = AudioSegment.from_wav(wav_path)
-    chunk_ms = chunk_minutes * 60 * 1000 
 
-    chunks = []
 
-    for i, start in enumerate(range(0,len(audio),chunk_ms)):
-        chunk = audio[start : start + chunk_ms]
-        chunk_path = f"{wav_path}_chunk_{i}.wav"
-        chunk.export(chunk_path , format = "wav")
 
-        chunks.append(chunk_path)
-    
+
+def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
+
+    chunk_seconds = chunk_minutes * 60
+
+
+
+    output_dir = os.path.splitext(wav_path)[0] + "_chunks"
+
+    os.makedirs(output_dir, exist_ok=True)
+
+
+
+    chunk_pattern = os.path.join(output_dir, "chunk_%03d.wav")
+
+
+
+    subprocess.run(
+
+        [
+
+            "ffmpeg",
+
+            "-i", wav_path,
+
+            "-f", "segment",
+
+            "-segment_time", str(chunk_seconds),
+
+            "-c", "copy",
+
+            chunk_pattern,
+
+            "-y",
+
+        ],
+
+        check=True,
+
+        stdout=subprocess.DEVNULL,
+
+        stderr=subprocess.DEVNULL,
+
+    )
+
+
+
+    chunks = sorted(
+
+        [
+
+            os.path.join(output_dir, f)
+
+            for f in os.listdir(output_dir)
+
+            if f.endswith(".wav")
+
+        ]
+
+    )
+
     return chunks
 
 def process_input(source: str) -> list:
